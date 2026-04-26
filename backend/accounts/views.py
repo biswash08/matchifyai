@@ -1,3 +1,62 @@
-from django.shortcuts import render
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import permissions, status
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
+from .serializers import RegisterSerializer, UserSerializer, LoginSerializer
 
-# Create your views here.
+# Registration View - allows anyone to register
+class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]  # Anyone can access
+    
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            
+            # Create JWT token for the new user
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'message': 'User created successfully',
+                'user': UserSerializer(user).data,
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# Login View - allows anyone to login
+class LoginView(APIView):
+    permission_classes = [permissions.AllowAny]  # Anyone can access
+    
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            username = serializer.validated_data['username']
+            password = serializer.validated_data['password']
+            
+            # Check if user exists and password is correct
+            user = authenticate(username=username, password=password)
+            
+            if user:
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    'message': 'Login successful',
+                    'user': UserSerializer(user).data,
+                    'access': str(refresh.access_token),
+                    'refresh': str(refresh),
+                })
+        
+        return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+
+# Profile View - requires login
+class ProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]  # Must be logged in
+    
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
