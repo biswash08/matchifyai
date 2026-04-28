@@ -1,22 +1,23 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
+from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
+from .models import User
 from .serializers import RegisterSerializer, UserSerializer, LoginSerializer
 
-# Registration View - allows anyone to register
 class RegisterView(APIView):
-    permission_classes = [permissions.AllowAny]  # Anyone can access
+    permission_classes = [AllowAny]
     
     def post(self, request):
+        print("Register view reached")
+        print("Request data:", request.data)
+        
         serializer = RegisterSerializer(data=request.data)
         
         if serializer.is_valid():
             user = serializer.save()
-            
-            # Create JWT token for the new user
             refresh = RefreshToken.for_user(user)
             
             return Response({
@@ -26,21 +27,20 @@ class RegisterView(APIView):
                 'refresh': str(refresh),
             }, status=status.HTTP_201_CREATED)
         
+        print("Serializer errors:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Login View - allows anyone to login
 class LoginView(APIView):
-    permission_classes = [permissions.AllowAny]  # Anyone can access
+    permission_classes = [AllowAny]
     
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         
         if serializer.is_valid():
-            username = serializer.validated_data['username']
+            email = serializer.validated_data['email']
             password = serializer.validated_data['password']
             
-            # Check if user exists and password is correct
-            user = authenticate(username=username, password=password)
+            user = authenticate(email=email, password=password)
             
             if user:
                 refresh = RefreshToken.for_user(user)
@@ -53,9 +53,8 @@ class LoginView(APIView):
         
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
-# Profile View - requires login
 class ProfileView(APIView):
-    permission_classes = [permissions.IsAuthenticated]  # Must be logged in
+    permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
         serializer = UserSerializer(request.user)
