@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { Sparkles, Upload, FileText, Zap, Shield, ArrowRight, CheckCircle, XCircle, AlertCircle, Loader2, Save } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Sparkles, Upload, FileText, Zap, Shield, ArrowRight, CheckCircle, XCircle, AlertCircle, Loader2, Save, Target, Lightbulb } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import axios from 'axios'
 import { toast } from 'sonner'
@@ -23,10 +23,18 @@ export default function Home() {
   const [jobTitle, setJobTitle] = useState('')
   const [jobDescription, setJobDescription] = useState('')
   const [cvFile, setCvFile] = useState<File | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setCvFile(e.target.files[0])
+      const file = e.target.files[0]
+      if (file.type === 'application/pdf' || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        setCvFile(file)
+        setResult(null)
+        toast.success('File uploaded successfully!')
+      } else {
+        toast.error('Please upload a PDF or DOCX file')
+      }
     }
   }
 
@@ -41,30 +49,61 @@ export default function Home() {
     }
 
     setLoading(true)
+    setUploadProgress(0)
+    setResult(null)
+    
     const formData = new FormData()
     formData.append('cv_file', cvFile)
     formData.append('job_description', jobDescription)
-    formData.append('job_title', jobTitle || 'Untitled Analysis')
+    if (jobTitle) formData.append('job_title', jobTitle)
 
     try {
       const response = await axios.post('http://localhost:8000/api/analyzer/public-analyze/', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            setUploadProgress(percent)
+          }
+        },
       })
       setResult(response.data)
       toast.success('Analysis complete!')
-    } catch (error) {
-      toast.error('Analysis failed. Please try again.')
+    } catch (error: any) {
+      console.error('Analysis error:', error)
+      toast.error(error.response?.data?.error || 'Analysis failed. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSaveResult = () => {
+  const handleSaveResult = async () => {
+    if (!result || !cvFile) return
+
     if (user) {
-      // Save to history (implement in next step)
-      toast.success('Analysis saved to your history!')
+      const formData = new FormData()
+      formData.append('cv_file', cvFile)
+      formData.append('job_description', jobDescription)
+      formData.append('job_title', jobTitle)
+      formData.append('match_score', result.match_score.toString())
+      formData.append('matched_keywords', JSON.stringify(result.matched_keywords))
+      formData.append('missing_keywords', JSON.stringify(result.missing_keywords))
+      formData.append('ai_suggestions', result.ai_suggestions)
+
+      try {
+        const token = localStorage.getItem('access_token')
+        await axios.post('http://localhost:8000/api/analyzer/save/', formData, {
+          headers: { 
+            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        toast.success('Analysis saved to your history!')
+      } catch (error) {
+        toast.error('Failed to save. Please try again.')
+      }
     } else {
-      router.push('/register?redirect=analysis')
+      router.push('/register?redirect=/')
     }
   }
 
@@ -74,10 +113,16 @@ export default function Home() {
     return 'text-red-400'
   }
 
-  const getScoreBadge = (score: number) => {
-    if (score >= 70) return { label: 'Excellent Match', color: 'bg-green-500' }
-    if (score >= 50) return { label: 'Good Match', color: 'bg-yellow-500' }
-    return { label: 'Needs Improvement', color: 'bg-red-500' }
+  const getScoreBg = (score: number) => {
+    if (score >= 70) return 'bg-green-500/20 border-green-500/50'
+    if (score >= 50) return 'bg-yellow-500/20 border-yellow-500/50'
+    return 'bg-red-500/20 border-red-500/50'
+  }
+
+  const getScoreLabel = (score: number) => {
+    if (score >= 70) return 'Excellent Match!'
+    if (score >= 50) return 'Good Match'
+    return 'Needs Improvement'
   }
 
   return (
@@ -171,13 +216,34 @@ export default function Home() {
 
                 <div className="space-y-2">
                   <Label className="text-gray-200">Upload CV *</Label>
-                  <div className="border-2 border-dashed border-white/20 rounded-lg p-6 text-center hover:border-purple-500 transition cursor-pointer"
-                    onClick={() => document.getElementById('cv-upload')?.click()}>
+                  <div
+                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-all cursor-pointer
+                      ${cvFile ? 'bg-green-500/10 border-green-500' : 'border-white/20 hover:border-purple-500'}
+                    `}
+                    onClick={() => document.getElementById('cv-upload')?.click()}
+                  >
                     <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-300">
-                      {cvFile ? cvFile.name : 'Click or drag to upload CV'}
-                    </p>
-                    <p className="text-gray-400 text-sm mt-1">PDF or DOCX (Max 5MB)</p>
+                    {cvFile ? (
+                      <div className="space-y-1">
+                        <p className="text-green-400 font-medium">{cvFile.name}</p>
+                        <p className="text-gray-400 text-sm">{(cvFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setCvFile(null)
+                            setResult(null)
+                          }}
+                          className="text-red-400 text-sm hover:text-red-300"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-gray-300">Click or drag to upload CV</p>
+                        <p className="text-gray-400 text-sm mt-1">PDF or DOCX (Max 5MB)</p>
+                      </>
+                    )}
                     <input
                       id="cv-upload"
                       type="file"
@@ -196,7 +262,7 @@ export default function Home() {
                   {loading ? (
                     <>
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      Analyzing...
+                      Analyzing... {uploadProgress}%
                     </>
                   ) : (
                     <>
@@ -205,6 +271,10 @@ export default function Home() {
                     </>
                   )}
                 </Button>
+
+                {loading && uploadProgress > 0 && uploadProgress < 100 && (
+                  <Progress value={uploadProgress} className="h-2" />
+                )}
               </CardContent>
             </Card>
           </motion.div>
@@ -222,51 +292,20 @@ export default function Home() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
                 >
-                  <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                  <Card className={`bg-white/10 backdrop-blur-lg border-2 ${getScoreBg(result.match_score)}`}>
                     <CardHeader>
-                      <CardTitle className="text-2xl text-white">Analysis Results</CardTitle>
-                      <CardDescription className="text-gray-300">
-                        Your CV match score and recommendations
+                      <CardTitle className="flex items-center justify-between text-white">
+                        <span>Analysis Results</span>
+                        <span className={`text-3xl font-bold ${getScoreColor(result.match_score)}`}>
+                          {result.match_score}%
+                        </span>
+                      </CardTitle>
+                      <CardDescription className="flex items-center gap-2 text-gray-300">
+                        <Target className="h-4 w-4" />
+                        {getScoreLabel(result.match_score)}
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                      {/* Score Circle */}
-                      <div className="text-center">
-                        <div className="relative inline-flex items-center justify-center">
-                          <svg className="w-32 h-32">
-                            <circle
-                              className="text-gray-700"
-                              strokeWidth="8"
-                              stroke="currentColor"
-                              fill="transparent"
-                              r="58"
-                              cx="64"
-                              cy="64"
-                            />
-                            <circle
-                              className={getScoreColor(result.match_score)}
-                              strokeWidth="8"
-                              strokeDasharray={364.4}
-                              strokeDashoffset={364.4 * (1 - result.match_score / 100)}
-                              strokeLinecap="round"
-                              stroke="currentColor"
-                              fill="transparent"
-                              r="58"
-                              cx="64"
-                              cy="64"
-                            />
-                          </svg>
-                          <div className="absolute">
-                            <span className={`text-4xl font-bold ${getScoreColor(result.match_score)}`}>
-                              {result.match_score}%
-                            </span>
-                          </div>
-                        </div>
-                        <Badge className={`mt-3 ${getScoreBadge(result.match_score).color} text-white`}>
-                          {getScoreBadge(result.match_score).label}
-                        </Badge>
-                      </div>
-
                       {/* Stats */}
                       <div className="grid grid-cols-2 gap-4">
                         <div className="text-center p-3 bg-white/5 rounded-lg">
@@ -279,45 +318,47 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Keywords */}
-                      <div>
-                        <p className="text-green-400 font-semibold mb-2 flex items-center">
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Matched Keywords ({result.matched_keywords.length})
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {result.matched_keywords.slice(0, 10).map((kw: string) => (
-                            <Badge key={kw} variant="secondary" className="bg-green-500/20 text-green-300">
-                              {kw}
-                            </Badge>
-                          ))}
+                      {/* Matched Keywords */}
+                      {result.matched_keywords.length > 0 && (
+                        <div>
+                          <p className="text-green-400 font-semibold mb-2 flex items-center">
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            Matched Keywords ({result.matched_keywords.length})
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {result.matched_keywords.slice(0, 15).map((kw: string) => (
+                              <Badge key={kw} className="bg-green-500/20 text-green-300 hover:bg-green-500/30">
+                                {kw}
+                              </Badge>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      <div>
-                        <p className="text-red-400 font-semibold mb-2 flex items-center">
-                          <XCircle className="w-4 h-4 mr-2" />
-                          Missing Keywords ({result.missing_keywords.length})
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {result.missing_keywords.slice(0, 10).map((kw: string) => (
-                            <Badge key={kw} variant="secondary" className="bg-red-500/20 text-red-300">
-                              {kw}
-                            </Badge>
-                          ))}
+                      {/* Missing Keywords */}
+                      {result.missing_keywords.length > 0 && (
+                        <div>
+                          <p className="text-red-400 font-semibold mb-2 flex items-center">
+                            <XCircle className="w-4 h-4 mr-2" />
+                            Missing Keywords ({result.missing_keywords.length})
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {result.missing_keywords.slice(0, 15).map((kw: string) => (
+                              <Badge key={kw} className="bg-red-500/20 text-red-300 hover:bg-red-500/30">
+                                {kw}
+                              </Badge>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* AI Suggestions */}
-                      <div className="p-4 bg-purple-500/10 rounded-lg border border-purple-500/20">
-                        <p className="text-purple-400 font-semibold mb-2 flex items-center">
-                          <AlertCircle className="w-4 h-4 mr-2" />
-                          AI Suggestions
-                        </p>
-                        <p className="text-gray-300 text-sm whitespace-pre-line">
+                      <Alert className="bg-yellow-500/10 border-yellow-500/20">
+                        <Lightbulb className="h-4 w-4 text-yellow-400 mt-1" />
+                        <AlertDescription className="text-yellow-300 whitespace-pre-line max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                           {result.ai_suggestions}
-                        </p>
-                      </div>
+                        </AlertDescription>
+                      </Alert>
 
                       {/* Save Button */}
                       <Button
@@ -348,7 +389,7 @@ export default function Home() {
 
         {/* Features Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16">
-          <Card className="bg-white/5 border-white/10">
+          <Card className="bg-white/5 border-white/10 hover:bg-white/10 transition-all">
             <CardHeader>
               <Zap className="w-10 h-10 text-purple-400 mb-2" />
               <CardTitle className="text-white">Instant Analysis</CardTitle>
@@ -357,7 +398,7 @@ export default function Home() {
               </CardDescription>
             </CardHeader>
           </Card>
-          <Card className="bg-white/5 border-white/10">
+          <Card className="bg-white/5 border-white/10 hover:bg-white/10 transition-all">
             <CardHeader>
               <Shield className="w-10 h-10 text-blue-400 mb-2" />
               <CardTitle className="text-white">No Login Required</CardTitle>
@@ -366,7 +407,7 @@ export default function Home() {
               </CardDescription>
             </CardHeader>
           </Card>
-          <Card className="bg-white/5 border-white/10">
+          <Card className="bg-white/5 border-white/10 hover:bg-white/10 transition-all">
             <CardHeader>
               <Sparkles className="w-10 h-10 text-green-400 mb-2" />
               <CardTitle className="text-white">AI-Powered</CardTitle>
